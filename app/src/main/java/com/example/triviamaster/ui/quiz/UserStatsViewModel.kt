@@ -27,9 +27,12 @@ class UserStatsViewModel(
 
     init {
         viewModelScope.launch {
+            // Make sure a profile doc exists before listening
             repo.ensureProfile(auth.currentUser?.displayName)
             repo.statsFlow()
-                .catch { e -> _ui.value = _ui.value.copy(loading = false, error = e.message) }
+                .catch { e ->
+                    _ui.value = _ui.value.copy(loading = false, error = e.message ?: "Unknown error")
+                }
                 .collect { stats ->
                     _ui.value = StatsUiState(
                         loading = false,
@@ -43,6 +46,8 @@ class UserStatsViewModel(
 
     /** Call this from Results screen after a quiz completes */
     fun recordQuiz(correct: Int, total: Int) {
-        viewModelScope.launch { repo.recordQuiz(correct, total) }
+        viewModelScope.launch {
+            repo.recordQuiz(correct, total)
+        }
     }
 }

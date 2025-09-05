@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.roundToInt
 
 class UserStatsRepository(
     private val auth: FirebaseAuth = FirebaseAuth.getInstance(),
@@ -54,20 +55,26 @@ class UserStatsRepository(
     /** Update stats after a quiz finishes */
     suspend fun recordQuiz(correct: Int, total: Int) {
         val today = currentDay()
+
         db.runTransaction { tx ->
             val ref = doc()
             val snap = tx.get(ref)
             val prev = snap.toObject(UserStats::class.java) ?: UserStats()
 
-            val newTotal = prev.total + total
-            val newCorrect = prev.correct + correct
+            val newTotal = prev.total + total.coerceAtLeast(0)
+            val newCorrect = prev.correct + correct.coerceIn(0, total.coerceAtLeast(0))
             val newQuizzes = prev.quizzes + 1
 
             val newStreak = when (prev.lastQuizDay) {
                 null -> 1
-                today -> prev.streak            // same day; don’t change streak
+                today -> prev.streak                      // multiple quizzes in same UTC day
                 else -> if (isYesterday(prev.lastQuizDay, today)) prev.streak + 1 else 1
             }
+
+            val accuracyPct = if (newTotal == 0) 0
+            else ((newCorrect.toDouble() / newTotal) * 100).roundToInt()
+
+            val newBadges = countBadges(newQuizzes, accuracyPct, newStreak)
 
             tx.set(
                 ref,
@@ -76,11 +83,30 @@ class UserStatsRepository(
                     "correct" to newCorrect,
                     "total" to newTotal,
                     "streak" to newStreak,
-                    "lastQuizDay" to today
+                    "lastQuizDay" to today,
+                    "badges" to newBadges
                 ),
                 SetOptions.merge()
             )
         }.await()
+    }
+
+    // ---- Badge logic: deterministic from milestones ----
+    private fun countBadges(quizzes: Int, accuracyPct: Int, streak: Int): Int {
+        var b = 0
+        // Participation milestones
+        if (quizzes >= 1)  b++
+        if (quizzes >= 10) b++
+        if (quizzes >= 50) b++
+        // Accuracy milestones
+        if (accuracyPct >= 50) b++
+        if (accuracyPct >= 75) b++
+        if (accuracyPct >= 90) b++
+        // Streak milestones
+        if (streak >= 3)  b++
+        if (streak >= 7)  b++
+        if (streak >= 30) b++
+        return b
     }
 
     // ---- date helpers (UTC "yyyy-MM-dd") ----
@@ -89,15 +115,21 @@ class UserStatsRepository(
     private fun isYesterday(prev: String, today: String): Boolean {
         return try {
             val prevDate = parseDay(prev)
-            val todayDate = parseDay(today)
-            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { time = prevDate; add(Calendar.DATE, 1) }
-            formatDay(cal.time) == formatDay(todayDate)
+            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                time = prevDate
+                add(Calendar.DATE, 1)
+            }
+            formatDay(cal.time) == today
         } catch (_: Exception) { false }
     }
 
     private fun parseDay(s: String): Date =
-        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(s)!!
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.parse(s)!!
 
     private fun formatDay(d: Date): String =
-        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.format(d)
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(d)
 }

@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -20,6 +21,7 @@ import androidx.navigation.NavController
 import com.example.triviamaster.ui.navigation.Route
 import com.example.triviamaster.ui.quiz.QuizQuestion
 import com.example.triviamaster.ui.quiz.QuizViewModel
+import com.example.triviamaster.ui.quiz.UserStatsViewModel
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -34,11 +36,23 @@ fun ResultsScreen(nav: NavController) {
     val vm: QuizViewModel = viewModel(viewModelStoreOwner = owner)
     val state by vm.state.collectAsState()
 
+    // NEW: Stats VM to record quiz completion
+    val statsVm: UserStatsViewModel = viewModel()
+
     val bg = remember { Brush.verticalGradient(listOf(Color(0xFFEFF3FF), Color(0xFFF9FBFF))) }
 
     val total = state.questions.size
     val correct = state.correctCount
     val percent = if (total > 0) ((correct * 100f) / total).roundToInt() else 0
+
+    // NEW: One-shot write to Firestore when results arrive
+    var sent by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(correct, total) {
+        if (!sent && total > 0) {
+            statsVm.recordQuiz(correct, total)
+            sent = true
+        }
+    }
 
     val secs = max(state.secondsElapsed, 0)
     val mins = secs / 60
